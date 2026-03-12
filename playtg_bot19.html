@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>CORE ARCADE | ALL WORKING</title>
+    <style>
+        :root { --bg: #050a14; --panel: #111827; --accent: #3b82f6; --glow: #60a5fa; }
+        body, html { background: #000; color: #fff; margin: 0; padding: 0; height: 100vh; overflow: hidden; font-family: 'Consolas', monospace; user-select: none; touch-action: none; }
+        #menu, #game-screen { position: fixed; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; background: var(--bg); }
+        #start-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .btn-play { width: 100px; height: 100px; border-radius: 50%; background: none; border: 3px solid var(--accent); color: #fff; font-size: 18px; cursor: pointer; box-shadow: 0 0 20px var(--accent); }
+        .game-card { background: var(--panel); border-left: 4px solid var(--accent); padding: 15px; width: 220px; margin: 8px; cursor: pointer; }
+        #viewport { width: 100%; flex-grow: 1; display: flex; align-items: center; justify-content: center; position: relative; }
+        canvas { background: #000; border: 2px solid #334155; }
+        #ui-layer { position: absolute; top: 10px; width: 100%; text-align: center; font-size: 16px; color: var(--glow); z-index: 10; }
+        #controls { height: 260px; background: #0f172a; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 10px; width: 100%; box-sizing: border-box; }
+        .control-col { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+        .d-pad { display: grid; grid-template-columns: repeat(3, 50px); gap: 5px; }
+        .btn { background: #334155; border: none; border-radius: 8px; color: #fff; font-size: 20px; height: 50px; width: 50px; box-shadow: 0 4px 0 #000; outline: none; }
+        .btn:active { transform: translateY(2px); box-shadow: none; background: var(--accent); }
+        .action-btn { width: 85px; height: 85px; border-radius: 50% !important; background: var(--accent) !important; color: #fff; font-weight: bold; border: none; }
+        .exit-btn { background: #3b82f6; color: white; border: none; padding: 8px 20px; border-radius: 20px; cursor: pointer; font-size: 11px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div id="start-screen"><button class="btn-play" onclick="showMenu()">START</button></div>
+    <div id="menu">
+        <h2 style="color:var(--glow); margin-bottom: 20px;">SYSTEM_REBOOT</h2>
+        <div class="game-card" onclick="initGame('snake')">SNAKE.EXE (BEST: <span id="high-snake">0</span>)</div>
+        <div class="game-card" onclick="initGame('bird')">BIRD.LOG (BEST: <span id="high-bird">0</span>)</div>
+        <div class="game-card" onclick="initGame('maze')">SLIDE_MAZE (WINS: <span id="high-maze">0</span>)</div>
+    </div>
+    <div id="game-screen">
+        <div id="ui-layer">SCORE: <span id="scoreVal">0</span><br><small>BEST: <span id="bestVal">0</span></small></div>
+        <div id="viewport"><canvas id="gameCanvas"></canvas></div>
+        <div id="controls">
+            <div class="control-col"><div class="d-pad">
+                <div></div><button class="btn" onmousedown="press('up')" ontouchstart="press('up')">↑</button><div></div>
+                <button class="btn" onmousedown="press('left')" ontouchstart="press('left')">←</button><div></div><button class="btn" onmousedown="press('right')" ontouchstart="press('right')">→</button>
+                <div></div><button class="btn" onmousedown="press('down')" ontouchstart="press('down')">↓</button><div></div>
+            </div></div>
+            <div class="control-col">
+                <button class="btn action-btn" onmousedown="action()" ontouchstart="action()">ACTION</button>
+                <button class="exit-btn" onclick="location.reload()">MENU</button>
+            </div>
+            <div class="control-col"><div style="color:#475569; font-size:10px;">CORE V9 FINAL</div></div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreDisplay = document.getElementById('scoreVal');
+    const bestDisplay = document.getElementById('bestVal');
+    let currentLevel = '', score = 0, lastTime = 0, accumulator = 0, moveCounter = 0;
+    
+    let snake, food, sDir, bird, pipes, maze, player, exit, isMoving, visualX, visualY;
+    const mazeSize = 19;
+
+    function showMenu() {
+        ['snake','bird','maze'].forEach(g => document.getElementById(`high-${g}`).innerText = localStorage.getItem(`${g}_best`) || 0);
+        document.getElementById('start-screen').style.display='none';
+        document.getElementById('menu').style.display='flex';
+    }
+
+    function generateMaze(size) {
+        let m = Array(size).fill().map(() => Array(size).fill(1));
+        function walk(x, y) {
+            m[y][x] = 0;
+            let dirs = [[0,2],[0,-2],[2,0],[-2,0]].sort(() => Math.random() - 0.5);
+            for(let [dx, dy] of dirs) {
+                let nx = x + dx, ny = y + dy;
+                if(nx>0 && nx<size && ny>0 && ny<size && m[ny][nx] === 1) {
+                    m[y+dy/2][x+dx/2] = 0; walk(nx, ny);
+                }
+            }
+        }
+        walk(1, 1); return m;
+    }
+
+    function initGame(type) {
+        currentLevel = type; score = 0; scoreDisplay.innerText = "0";
+        bestDisplay.innerText = localStorage.getItem(type + '_best') || 0;
+        document.getElementById('menu').style.display='none';
+        document.getElementById('game-screen').style.display='flex';
+        
+        canvas.width = canvas.height = Math.min(window.innerWidth - 40, window.innerHeight - 350);
+
+        if(type === 'snake') { snake = [{x:10,y:10}]; food = {x:5,y:5}; sDir = {x:1,y:0}; }
+        if(type === 'bird') { bird = {y:canvas.height/2, v:0}; pipes = []; }
+        if(type === 'maze') { maze = generateMaze(mazeSize); player = {x:1, y:1}; visualX = 1; visualY = 1; exit = {x:mazeSize-2, y:mazeSize-2}; isMoving = false; }
+        
+        lastTime = performance.now(); accumulator = 0; moveCounter = 0;
+        requestAnimationFrame(gameLoop);
+    }
+
+    function press(d) {
+        if(currentLevel === 'snake') {
+            if(d==='up' && sDir.y===0) sDir={x:0,y:-1}; if(d==='down' && sDir.y===0) sDir={x:0,y:1};
+            if(d==='left' && sDir.x===0) sDir={x:-1,y:0}; if(d==='right' && sDir.x===0) sDir={x:1,y:0};
+        }
+        if(currentLevel === 'maze' && !isMoving) {
+            let dx=0, dy=0;
+            if(d==='up') dy=-1; if(d==='down') dy=1; if(d==='left') dx=-1; if(d==='right') dx=1;
+            if(maze[player.y+dy][player.x+dx] === 0) { isMoving = true; slide(dx, dy); }
+        }
+    }
+
+    function slide(dx, dy) {
+        let timer = setInterval(() => {
+            if(maze[player.y+dy][player.x+dx] === 0) {
+                player.x += dx; player.y += dy;
+                if(player.x === exit.x && player.y === exit.y) { clearInterval(timer); isMoving=false; winMaze(); }
+            } else { clearInterval(timer); isMoving = false; }
+        }, 30);
+    }
+
+    function winMaze() {
+        score++; scoreDisplay.innerText = score;
+        if(score > (localStorage.getItem('maze_best')||0)) localStorage.setItem('maze_best', score);
+        maze = generateMaze(mazeSize); player = {x:1,y:1}; visualX=1; visualY=1;
+    }
+
+    function action() { if(currentLevel === 'bird') bird.v = -4.5; }
+
+    function gameLoop(time) {
+        if(!currentLevel) return;
+        const dt = time - lastTime; lastTime = time; accumulator += dt;
+        ctx.fillStyle = '#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+        while(accumulator > 16.6) {
+            moveCounter += 16.6;
+            if(currentLevel === 'snake' && moveCounter > 150) {
+                let h = {x: snake[0].x+sDir.x, y: snake[0].y+sDir.y};
+                if(h.x<0||h.x>=20||h.y<0||h.y>=20) return initGame('snake');
+                snake.unshift(h);
+                if(h.x===food.x && h.y===food.y) { 
+                    score+=10; scoreDisplay.innerText=score; 
+                    if(score > (localStorage.getItem('snake_best')||0)) localStorage.setItem('snake_best', score);
+                    food={x:Math.floor(Math.random()*19),y:Math.floor(Math.random()*19)}; 
+                } else snake.pop();
+                moveCounter = 0;
+            }
+            if(currentLevel === 'bird') {
+                bird.v += 0.22; bird.y += bird.v;
+                if(moveCounter > 1500) { pipes.push({x:canvas.width, y:Math.random()*(canvas.height-180)+40}); moveCounter=0; }
+                pipes.forEach((p,i) => {
+                    p.x -= 2;
+                    if(p.x === 50) { score++; scoreDisplay.innerText=score; if(score > (localStorage.getItem('bird_best')||0)) localStorage.setItem('bird_best', score); }
+                    if(50 > p.x && 50 < p.x+40 && (bird.y < p.y || bird.y+22 > p.y+130)) initGame('bird');
+                    if(p.x < -40) pipes.splice(i,1);
+                });
+                if(bird.y > canvas.height || bird.y < 0) initGame('bird');
+            }
+            accumulator -= 16.6;
+        }
+
+        if(currentLevel === 'snake') {
+            const sz = canvas.width/20;
+            ctx.fillStyle='#3b82f6'; snake.forEach(s=>ctx.fillRect(s.x*sz, s.y*sz, sz-1, sz-1));
+            ctx.fillStyle='#f00'; ctx.fillRect(food.x*sz, food.y*sz, sz-1, sz-1);
+        }
+        if(currentLevel === 'bird') {
+            ctx.fillStyle='#22c55e'; pipes.forEach(p=>{ ctx.fillRect(p.x,0,40,p.y); ctx.fillRect(p.x,p.y+130,40,canvas.height); });
+            ctx.fillStyle='#fbbf24'; ctx.fillRect(50, bird.y, 22, 22);
+        }
+        if(currentLevel === 'maze') {
+            const cs = canvas.width/mazeSize;
+            visualX += (player.x - visualX) * 0.2; visualY += (player.y - visualY) * 0.2;
+            for(let y=0; y<mazeSize; y++) for(let x=0; x<mazeSize; x++) if(maze[y][x]) { ctx.fillStyle='#1e293b'; ctx.fillRect(x*cs, y*cs, cs+1, cs+1); }
+            ctx.fillStyle='#facc15'; ctx.fillRect(exit.x*cs, exit.y*cs, cs, cs);
+            ctx.fillStyle='#3b82f6'; ctx.fillRect(visualX*cs, visualY*cs, cs, cs);
+        }
+        requestAnimationFrame(gameLoop);
+    }
+    window.onkeydown = e => {
+        const k = e.key.toLowerCase();
+        if(k==='w'||e.key==='ArrowUp') press('up'); if(k==='s'||e.key==='ArrowDown') press('down');
+        if(k==='a'||e.key==='ArrowLeft') press('left'); if(k==='d'||e.key==='ArrowRight') press('right');
+        if(k===' '||k==='e') action();
+    };
+</script>
+</body>
+</html>
